@@ -117,19 +117,33 @@ export function apply(ctx: Context, config: Config = Config({})): void {
     const resolution = registry.resolve(target)
     targetSource.set(target)
     let displayed = false
+    let readyToShow = false
     const publish = (): void => { if (displayed) instance.actions.items(resolution.source.getSnapshot()) }
-    const occurrence = { resolution, unsubscribe: resolution.source.subscribe(publish), target, point }
-    active = occurrence
-    const delay = new Promise<void>((resolve) => {
-      finishOpening = resolve; openingTimer = setTimeout(resolve, MENU_TRANSITION_MS.prepare)
-    })
-    void Promise.all([resolution.ready, delay]).then(() => {
-      if (active !== occurrence) return
+    const reveal = (): void => {
+      if (displayed || active?.resolution !== resolution) return
       clearTimeout(closeTimer)
       instance.actions.open(target, point)
       displayed = true
       publish()
+    }
+    // A provider may need a Host round trip; showing the first resolved contribution keeps the
+    // gesture responsive while the remaining providers settle into the open menu.
+    const revealFirstContribution = (): void => {
+      if (!readyToShow || displayed) return
+      if (resolution.source.getSnapshot().length > 0) reveal()
+    }
+    const occurrence = {
+      resolution,
+      unsubscribe: resolution.source.subscribe(() => { publish(); revealFirstContribution() }),
+      target,
+      point,
+    }
+    active = occurrence
+    const delay = new Promise<void>((resolve) => {
+      finishOpening = resolve; openingTimer = setTimeout(resolve, MENU_TRANSITION_MS.prepare)
     })
+    void delay.then(() => { readyToShow = true; revealFirstContribution() })
+    void Promise.all([resolution.ready, delay]).then(reveal)
   }
   ctx.provide('contextMenus', contextMenus)
   ctx.slots.registerFactory({

@@ -138,6 +138,38 @@ it('waits for metadata, toggles nearby repeated gestures, replaces occurrences, 
   } finally { await fiber.dispose() }
 })
 
+it('shows the first settled contribution after the prepare window and appends later providers', async () => {
+  vi.useFakeTimers()
+  const ctx = new Context()
+  ctx.provide('shortcuts', { catalog: createSnapshotStore([]) } as never)
+  let store!: ReturnType<ReturnType<typeof createMenuStore>['create']>
+  ctx.provide('slots', { provideRoot: () => () => {}, registerFactory: () => () => {},
+    inject: (_name: string, register: Parameters<SlotRegistry['inject']>[1]) => ctx.effect(register),
+    register: (entry: { store: ReturnType<typeof createMenuStore> }) => { store = entry.store.create(); return () => {} },
+  } as never)
+  ctx.provide('locale', { register: () => () => {}, bind: () => (key: string) => key } as never)
+  const fiber = ctx.plugin({ inject, apply })
+  await fiber.await()
+  let finish!: (actions: readonly MenuAction[]) => void
+  ctx.contextMenus.register({ target: 'pluginDocument', id: 'local', order: 0,
+    resolve: () => [{ id: 'copy', label: 'Copy' }] })
+  ctx.contextMenus.register({ target: 'pluginDocument', id: 'host', order: 1,
+    resolve: () => new Promise((resolve) => { finish = resolve }) })
+  const target = { kind: 'pluginDocument' as const, value: { id: 'stream' } }
+  try {
+    ctx.contextMenus.open(target, { x: 10, y: 10 })
+    await vi.advanceTimersByTimeAsync(10)
+    expect(store.getSnapshot().target).toBeNull()
+    await vi.advanceTimersByTimeAsync(20)
+    expect(store.getSnapshot().target).toEqual(target)
+    expect(store.getSnapshot().items.map(item => item.label)).toEqual(['Copy'])
+    finish([{ id: 'open', label: 'Open' }])
+    await vi.advanceTimersByTimeAsync(0)
+    expect(store.getSnapshot().items.map(item => item.label)).toEqual(['Copy', 'Open'])
+    expect(store.getSnapshot().notice).toBeNull()
+  } finally { await fiber.dispose() }
+})
+
 it('keeps trigger focus through replacement and ignores non-dismissal events and late feedback', async () => {
   vi.useFakeTimers()
   const ctx = new Context()
